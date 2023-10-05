@@ -21,6 +21,7 @@ export interface LoaderOptions {
   terminal?: IEspLoaderTerminal;
   romBaudrate: number;
   debugLogging?: boolean;
+  noStub?: boolean;
 }
 
 async function magic2Chip(magic: number): Promise<ROM | null> {
@@ -117,16 +118,19 @@ export class ESPLoader {
   chip!: ROM;
   IS_STUB: boolean;
   FLASH_WRITE_SIZE: number;
+  STATUS_BYTES_LENGTH: number;
 
   public transport: Transport;
   private baudrate: number;
   private terminal?: IEspLoaderTerminal;
   private romBaudrate = 115200;
   private debugLogging = false;
+  private noStub = false;
 
   constructor(options: LoaderOptions) {
     this.IS_STUB = false;
     this.FLASH_WRITE_SIZE = 0x4000;
+    this.STATUS_BYTES_LENGTH = 2;
 
     this.transport = options.transport;
     this.baudrate = options.baudrate;
@@ -139,6 +143,11 @@ export class ESPLoader {
     }
     if (options.debugLogging) {
       this.debugLogging = options.debugLogging;
+    }
+    if (options.noStub) {
+      this.noStub = options.noStub;
+      this.FLASH_WRITE_SIZE = 0x400;
+      this.STATUS_BYTES_LENGTH = 4;
     }
 
     this.info("esptool.js");
@@ -419,8 +428,18 @@ export class ESPLoader {
   ) {
     this.debug("check_command " + op_description);
     const resp = await this.command(op, data, chk, undefined, timeout);
-    if (resp[1].length > 4) {
-      return resp[1];
+    /* the status bytes are the last 2/4 bytes in the data (depending on chip) */
+    if (resp[1].length < this.STATUS_BYTES_LENGTH) {
+      throw new ESPError(`Failed to ${op_description}. Only got ${resp[1].length} byte status response.`);
+    }
+    const status_bytes = resp[1].slice(-this.STATUS_BYTES_LENGTH);
+    /* only care if the first one is non-zero. If it is, the second byte is a reason. */
+    if (status_bytes[0] != 0)
+      throw new ESPError(`Failed to ${op_description}`)
+      // raise FatalError.WithResult("Failed to %s" % op_description, status_bytes)
+
+    if (resp[1].length > this.STATUS_BYTES_LENGTH) {
+      return resp[1].slice(0, -this.STATUS_BYTES_LENGTH);
     } else {
       return resp[0];
     }
@@ -461,7 +480,15 @@ export class ESPLoader {
   }
 
   async flash_spi_attach(hspi_arg: number) {
-    const pkt = this._int_to_bytearray(hspi_arg);
+    let pkt = this._int_to_bytearray(hspi_arg);
+    if (!this.IS_STUB) {
+      /**
+       * ESP32 ROM loader takes additional 'is legacy' arg, which is not
+       * currently supported in the stub loader or esptool.py
+       * (as it's not usually needed.)
+       */
+      pkt = this._appendArray(pkt, this._int_to_bytearray(0));
+    }
     await this.check_command("configure SPI flash pins", this.ESP_SPI_ATTACH, pkt);
   }
 
@@ -711,11 +738,14 @@ export class ESPLoader {
     pkt = this._appendArray(pkt, this._int_to_bytearray(0));
 
     let res = await this.check_command("calculate md5sum", this.ESP_SPI_FLASH_MD5, pkt, undefined, timeout);
-    if (res instanceof Uint8Array && res.length > 16) {
-      res = res.slice(0, 16);
+    if (res instanceof Uint8Array && res.length === 32) {
+      return (new TextDecoder).decode(res);  // already hex formatted
     }
-    const strmd5 = this.toHex(res);
-    return strmd5;
+    if (res instanceof Uint8Array && res.length === 16) {
+      const strmd5 = this.toHex(res);
+      return strmd5;
+    }
+    throw new ESPError(`MD5Sum command returned unexpected result: ${res}`);
   }
 
   async run_stub() {
@@ -798,7 +828,9 @@ export class ESPLoader {
       await this.chip._post_connect(this);
     }
 
-    await this.run_stub();
+    if (!this.noStub) {
+      await this.run_stub();
+    }
 
     if (this.romBaudrate !== this.baudrate) {
       await this.change_baud();
