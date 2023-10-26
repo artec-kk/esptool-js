@@ -77,6 +77,7 @@ export class ESPLoader {
   ESP_WRITE_REG = 0x09;
   ESP_READ_REG = 0x0a;
 
+  ESP_SPI_SET_PARAMS = 0x0b;
   ESP_SPI_ATTACH = 0x0d;
   ESP_CHANGE_BAUDRATE = 0x0f;
   ESP_FLASH_DEFL_BEGIN = 0x10;
@@ -490,6 +491,32 @@ export class ESPLoader {
       pkt = this._appendArray(pkt, this._int_to_bytearray(0));
     }
     await this.check_command("configure SPI flash pins", this.ESP_SPI_ATTACH, pkt);
+  }
+
+  async flash_set_parameters(size: number) {
+    /**
+     * Tell the ESP bootloader the parameters of the chip
+     *  Corresponds to the "flashchip" data structure that the ROM
+     *  has in RAM.
+     *
+     *  'size' is in bytes.
+     *
+     *  All other flash parameters are currently hardcoded(on ESP8266
+     *  these are mostly ignored by ROM code, on ESP32 I'm not sure.)
+     */
+    const fl_id = 0
+    const total_size = size
+    const block_size = 64 * 1024
+    const sector_size = 4 * 1024
+    const page_size = 256
+    const status_mask = 0xFFFF
+
+    let pkt = this._appendArray(this._int_to_bytearray(fl_id), this._int_to_bytearray(total_size));
+    pkt = this._appendArray(pkt, this._int_to_bytearray(block_size));
+    pkt = this._appendArray(pkt, this._int_to_bytearray(sector_size));
+    pkt = this._appendArray(pkt, this._int_to_bytearray(page_size));
+    pkt = this._appendArray(pkt, this._int_to_bytearray(status_mask));
+    return await this.check_command("set SPI params", this.ESP_SPI_SET_PARAMS, pkt);
   }
 
   timeout_per_mb = function (seconds_per_mb: number, size_bytes: number) {
