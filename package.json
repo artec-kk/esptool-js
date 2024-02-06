@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "build": "npm run clean && tsc && rollup --config",
+    "norollup": "npm run clean && tsc",
     "clean": "rimraf lib bundle.js",
     "format": "prettier --write \"src/**/*.ts\"",
     "lint": "eslint . --ext .ts",
