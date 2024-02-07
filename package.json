@@ -28,6 +28,7 @@
     "url": "https://github.com/espressif/esptool-js/issues"
   },
   "dependencies": {
+    "@babel/core": "^7.23.9",
     "pako": "^2.1.0",
     "tslib": "^2.4.1"
   },
